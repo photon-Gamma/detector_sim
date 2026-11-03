@@ -1,0 +1,20 @@
+[package]
+name = "pd_anim"
+version = "0.2.0"
+edition = "2021"
+description = "光検出器 (Si PIN PD / APD) の動作アニメーションを生成する"
+
+# 外部クレートなし (ネット接続なしでビルドできる)
+[dependencies]
+
+[profile.release]
+opt-level = 3
+
+# 安全のためのルール: unsafe 禁止、unwrap / expect / panic を使わない
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
