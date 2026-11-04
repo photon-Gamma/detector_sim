@@ -71,15 +71,17 @@ fn create_dir(out: &Path) -> Result<()> {
     std::fs::create_dir_all(out).map_err(AppError::io_path("出力フォルダを作れません", out))
 }
 
-/// 1本の動画を作る。
-/// ffmpeg: シーンごとに .mp4 にして、最後に再エンコードせずにつなぐ (シーン単位の確認もできる)。
-/// OpenCV: つなぐ機能がないので、全シーンを 1 つのファイルに続けて書く。
+/// 1本の動画を作る。シーンごとのファイルも必ず作る:
+///   out/scenes/<動画名>/01_title.mp4, 02_si.mp4, … (番号は再生順)
+/// ffmpeg: シーンごとのファイルを、最後に再エンコードせずにつないで 1 本にする。
+/// OpenCV: つなぐ機能がないので、シーンごとのファイルと 1 本通しのファイルを同時に書く。
 fn render_video(canvas: &mut Canvas, backend: &video::Backend, out: &Path, def: &scenes::VideoDef) -> Result<()> {
     let t0 = Instant::now();
     eprintln!("== {} ==", def.file);
     let dst = out.join(def.file);
-    let per_scene = backend.can_concat();
-    let mut whole = if per_scene { None } else { Some(video::Encoder::create(backend, SPEC, &dst)?) };
+    let scene_dir = out.join("scenes").join(def.key);
+    create_dir(&scene_dir)?;
+    let mut whole = if backend.can_concat() { None } else { Some(video::Encoder::create(backend, SPEC, &dst)?) };
     let mut parts = Vec::new();
     let mut total_frames = 0u32;
     for (i, name) in def.scenes.iter().enumerate() {
@@ -87,16 +89,15 @@ fn render_video(canvas: &mut Canvas, backend: &video::Backend, out: &Path, def: 
         let n = scene.frames();
         total_frames += n;
         eprintln!("[{}/{}] {} ({} フレーム)", i + 1, def.scenes.len(), scene.title(), n);
-        let mut part = if per_scene { Some(video::Encoder::create(backend, SPEC, &out.join(format!("{}_{}.mp4", def.key, name)))?) } else { None };
+        let mut part = video::Encoder::create(backend, SPEC, &scene_dir.join(scene_file_name(i, name)))?;
         for f in 0..n {
             scene.render(canvas, f);
-            if let Some(enc) = part.as_mut().or(whole.as_mut()) {
+            part.write_frame(canvas.pixels())?;
+            if let Some(enc) = whole.as_mut() {
                 enc.write_frame(canvas.pixels())?;
             }
         }
-        if let Some(enc) = part {
-            parts.push(enc.finish()?);
-        }
+        parts.push(part.finish()?);
     }
     match whole {
         Some(enc) => {
@@ -105,7 +106,13 @@ fn render_video(canvas: &mut Canvas, backend: &video::Backend, out: &Path, def: 
         None => video::concat(&parts, &dst)?,
     }
     println!("完成: {} ({} 秒の動画, 処理 {:.1} 秒)", dst.display(), total_frames / FPS, t0.elapsed().as_secs_f32());
+    println!("      シーンごと: {} ({} 本)", scene_dir.display(), parts.len());
     Ok(())
+}
+
+/// シーンごとのファイル名: 再生順の番号 (01 から) + シーン名
+fn scene_file_name(index: usize, name: &str) -> String {
+    format!("{:02}_{name}.mp4", index + 1)
 }
 
 /// 指定シーンの指定フレームを PNG に保存する
@@ -158,4 +165,16 @@ fn gain_stats(detector: cli::Detector, trials: usize) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_files_sort_in_play_order() {
+        assert_eq!(scene_file_name(0, "title"), "01_title.mp4");
+        assert_eq!(scene_file_name(5, "pmt_vs_hpd"), "06_pmt_vs_hpd.mp4");
+        assert!(scene_file_name(8, "a") < scene_file_name(9, "a"));
+    }
 }

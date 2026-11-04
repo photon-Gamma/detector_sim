@@ -189,8 +189,13 @@ impl Drop for Encoder {
 }
 
 /// 同じ設定で作った .mp4 を順につなぐ (ffmpeg、再エンコードなし)
+/// 連結リストはシーンのファイルと同じフォルダに置く (リストの中はファイル名だけで書くため)。
 pub fn concat(parts: &[PathBuf], dst: &Path) -> Result<()> {
-    let dir = dst.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let first = parts.first().ok_or_else(|| AppError::Encoder("つなぐシーンがありません".into()))?;
+    let dir = first.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    if parts.iter().any(|p| p.parent().filter(|q| !q.as_os_str().is_empty()).unwrap_or(Path::new(".")) != dir) {
+        return Err(AppError::Encoder("つなぐシーンは同じフォルダに置いてください".into()));
+    }
     // 利用者のファイルを上書きしないよう、出力名から作った専用の名前にし、終わったら消す
     let stem = dst.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
     let list_path = dir.join(format!("{stem}.concat.txt"));
